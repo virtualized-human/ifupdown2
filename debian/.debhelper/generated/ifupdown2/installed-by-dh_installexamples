@@ -1,0 +1,9 @@
+./docs/examples/batman_adv
+./docs/examples/generate_interfaces.py
+./docs/examples/interfaces
+./docs/examples/interfaces_bridge_igmp_mstp
+./docs/examples/interfaces_bridge_template_func
+./docs/examples/interfaces_bridge_vlan_bond_vxlan_vrf
+./docs/examples/interfaces_with_template
+./docs/examples/mgmt-vrf
+./docs/examples/vlan_aware_bridges

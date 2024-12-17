@@ -1,0 +1,7 @@
+#! /bin/sh
+set -e
+
+if [ "$1" = rtupdate ]; then
+	py3clean -p ifupdown2 /usr/share/ifupdown2
+	py3compile -p ifupdown2  /usr/share/ifupdown2
+fi

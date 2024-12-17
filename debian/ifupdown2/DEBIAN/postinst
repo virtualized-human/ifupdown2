@@ -1,0 +1,147 @@
+#!/bin/sh
+set -e
+
+MYNAME="${0##*/}"
+
+report() { echo "${MYNAME}: $*" ; }
+report_warn() { report "Warning: $*" >&2 ; }
+report_err() { report "Error: $*" >&2 ; }
+
+fix_dhclient_file_with_space()
+{
+    # because of a typo an older ifupdown2 version was creating lease file
+    # with trailing space. In case we still have users with such files we
+    # need to strip that trailing whitespace.
+    for filename in `find /var/lib/dhcp/ -name "dhclient.*.leases "`
+    do
+        if [ -f "$filename " ];
+        then
+            interface_name=`echo $filename | cut -d'.' -f2,3,4,5`
+            mv "$filename " /var/lib/dhcp/dhclient6.$interface_name
+        fi
+    done
+}
+
+process_etc_network_interfaces()
+{
+    # Generic stuff done on all configurations
+    if [ -f /etc/network/interfaces ] ; then
+        if ! grep -q -E "^[[:space:]]*iface[[:space:]]+l[o0]([[:space:]]+inet([[:space:]]+loopback)?)?[[:space:]]*$" /etc/network/interfaces ; then
+            report_warn "No 'iface lo' definition found in /etc/network/interfaces"
+        fi
+
+        if ! grep -q "^[[:space:]]*\(allow-\|\)auto[[:space:]]\+\(.*[[:space:]]\+\|\)lo0\?\([[:space:]]\+\|$\)" /etc/network/interfaces ; then
+            report_warn "No 'auto lo' statement found in /etc/network/interfaces"
+        fi
+    else  # ! -f /etc/network/interfaces
+        if [ -z "$2" ]; then
+            echo "Creating /etc/network/interfaces."
+            echo "# interfaces(5) file used by ifup(8) and ifdown(8)" > /etc/network/interfaces
+            echo "source /etc/network/interfaces.d/*" >> /etc/network/interfaces
+            echo "auto lo" >> /etc/network/interfaces
+            echo "iface lo inet loopback" >> /etc/network/interfaces
+        else
+            report_warn "/etc/network/interfaces does not exist"
+        fi
+    fi
+}
+
+process_udev()
+{
+    # override default udev bridge and hotplug rules because they interfere with
+    # networking init script
+    udev_user_rulesdir=/etc/udev/rules.d/
+    udev_sys_rulesdir=/lib/udev/rules.d/
+    if [ -e $udev_user_rulesdir ]; then
+        udev_ifupdown2_overrides="80-networking.rules
+        60-bridge-network-interface.rules"
+        for u in ${udev_ifupdown2_overrides}
+        do
+            if [ -e ${udev_sys_rulesdir}/$u -a ! -e ${udev_user_rulesdir}/$u ]; then
+                (cd ${udev_user_rulesdir} && ln -sf /dev/null $u)
+            fi
+        done
+    fi
+}
+
+# restore file if we diverted it on install/upgrade
+_postinst_remove_diverts()
+{
+    diversions=$(LC_ALL=C.UTF-8 dpkg-divert --list | grep "^diversion of $1 .* by ifupdown2$"  | wc -l 2> /dev/null)
+    if [ $diversions -gt 0 ];
+    then
+        dpkg-divert --remove --package ifupdown2 --rename $1
+    fi
+}
+
+postinst_remove_diverts()
+{
+    for filename in ifup ifdown ifquery ifreload
+    do
+        _postinst_remove_diverts "/sbin/$filename"
+        _postinst_remove_diverts "/usr/share/bash-completion/completions/$filename"
+        _postinst_remove_diverts "/etc/bash_completion.d/$filename"
+        _postinst_remove_diverts "/usr/share/man/man8/$filename.8.gz"
+    done
+    _postinst_remove_diverts "/usr/share/man/man5/interfaces.5.gz"
+}
+
+case "$1" in
+    configure)
+        fix_dhclient_file_with_space
+        process_etc_network_interfaces
+        process_udev
+        chmod +x /usr/share/ifupdown2/__main__.py
+        postinst_remove_diverts
+    ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+
+# Automatically added by dh_systemd_enable/13.6ubuntu1
+if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
+	# This will only remove masks created by d-s-h on package removal.
+	deb-systemd-helper unmask 'networking.service' >/dev/null || true
+
+	# was-enabled defaults to true, so new installations run enable.
+	if deb-systemd-helper --quiet was-enabled 'networking.service'; then
+		# Enables the unit on first installation, creates new
+		# symlinks on upgrades if the unit file has changed.
+		deb-systemd-helper enable 'networking.service' >/dev/null || true
+	else
+		# Update the statefile to add new symlinks (if any), which need to be
+		# cleaned up on purge. Also remove old symlinks.
+		deb-systemd-helper update-state 'networking.service' >/dev/null || true
+	fi
+fi
+# End automatically added section
+
+# Automatically added by dh_python3
+if command -v py3compile >/dev/null 2>&1; then
+	py3compile -p ifupdown2 /usr/share/ifupdown2
+fi
+if command -v pypy3compile >/dev/null 2>&1; then
+	pypy3compile -p ifupdown2 /usr/share/ifupdown2 || true
+fi
+
+# End automatically added section
+# Automatically added by dh_systemd_start/13.6ubuntu1
+if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
+	if [ -z "${DPKG_ROOT:-}" ] && [ -d /run/systemd/system ]; then
+		systemctl --system daemon-reload >/dev/null || true
+		if [ -n "$2" ]; then
+			deb-systemd-invoke try-restart 'networking.service' >/dev/null || true
+		fi
+	fi
+fi
+# End automatically added section
+
+
+exit 0
